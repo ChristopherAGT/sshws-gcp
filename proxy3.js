@@ -1,103 +1,139 @@
 /*
-* Proxy Bridge
-* Copyright PANCHO7532 - P7COMUnications LLC (c) 2021
-* Dedicated to Emanuel Miranda, for giving me the idea to make this :v
-*/
+ * Proxy Bridge 2.0
+ * Autor: ChristopherAGT - Guatemalteco
+ */
+
 const crypto = require("crypto");
-const net = require('net');
-const stream = require('stream');
-const util = require('util');
-var dhost = process.env.DHOST || "127.0.0.1";
-var dport = process.env.DPORT || 40000;
-var mainPort = process.env.PORT || 8080;
-var outputFile = "outputFile.txt";
-var packetsToSkip = process.env.PACKSKIP || 1;
-var gcwarn = true;
-for(c = 0; c < process.argv.length; c++) {
-    switch(process.argv[c]) {
+const net = require("net");
+const fs = require("fs");
+
+// =======================
+// Configuración inicial
+// =======================
+let dhost = process.env.DHOST || "127.0.0.1";
+let dport = parseInt(process.env.DPORT, 10) || 40000;
+let mainPort = parseInt(process.env.PORT, 10) || 8080;
+let outputFile = null;
+let packetsToSkip = parseInt(process.env.PACKSKIP, 10) || 1;
+let gcwarn = true;
+
+// =======================
+// Argumentos por consola
+// =======================
+for (let i = 0; i < process.argv.length; i++) {
+    switch (process.argv[i]) {
         case "-skip":
-            packetsToSkip = process.argv[c + 1];
+            packetsToSkip = parseInt(process.argv[i + 1], 10) || packetsToSkip;
             break;
         case "-dhost":
-            dhost = process.argv[c + 1];
+            dhost = process.argv[i + 1] || dhost;
             break;
         case "-dport":
-            dport = process.argv[c + 1];
+            dport = parseInt(process.argv[i + 1], 10) || dport;
             break;
         case "-mport":
-            mainPort = process.argv[c + 1];
+            mainPort = parseInt(process.argv[i + 1], 10) || mainPort;
             break;
         case "-o":
-            outputFile = process.argv[c + 1];
+            outputFile = process.argv[i + 1] || null;
             break;
     }
 }
+
+// =========================
+// Recolección de basura
+// =========================
 function gcollector() {
-    if(!global.gc && gcwarn) {
-        console.log("[WARNING] Garbage Collector isn't enabled! Memory leaks may occur.");
+    if (!global.gc && gcwarn) {
+        console.warn("[WARNING] Garbage Collector isn't enabled! Run with --expose-gc");
         gcwarn = false;
         return;
-    } else if(global.gc) {
-        global.gc();
-        return;
-    } else {
-        return;
     }
-}
-function parseRemoteAddr(raddr) {
-    if(raddr.toString().indexOf("ffff") != -1) {
-        //is IPV4 address
-        return raddr.substring(7, raddr.length);
-    } else {
-        return raddr;
+    if (global.gc) {
+        global.gc();
     }
 }
 setInterval(gcollector, 1000);
+
+// ==============================
+// Limpieza de IP tipo "::ffff:"
+// ==============================
+function parseRemoteAddr(raddr) {
+    const strAddr = raddr.toString();
+    return strAddr.includes("ffff") ? strAddr.substring(strAddr.indexOf("ffff") + 4) : strAddr;
+}
+
+// =====================
+// Crear servidor TCP
+// =====================
 const server = net.createServer();
-server.on('connection', function(socket) {
-    var packetCount = 0;
-    //var handshakeMade = false;
-    socket.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nDate: " + new Date().toUTCString() + "\r\nSec-WebSocket-Accept: " + Buffer.from(crypto.randomBytes(20)).toString("base64") + "\r\nUpgrade: websocket\r\nServer: p7ws/0.1a\r\n\r\n");
-    console.log("[INFO] Connection received from " + socket.remoteAddress + ":" + socket.remotePort);
-    var conn = net.createConnection({host: dhost, port: dport});
-    socket.on('data', function(data) {
-        //pipe sucks
-        if(packetCount < packetsToSkip) {
-            //console.log("---c1");
-            packetCount++;
-        } else if(packetCount == packetsToSkip) {
-            //console.log("---c2");
+
+server.on("connection", (socket) => {
+    let packetCount = 0;
+    const clientIP = parseRemoteAddr(socket.remoteAddress);
+    const clientPort = socket.remotePort;
+
+    // Simula handshake WebSocket falso
+    const wsAccept = Buffer.from(crypto.randomBytes(20)).toString("base64");
+    socket.write(
+        `HTTP/1.1 101 Switching Protocols\r\n` +
+        `Connection: Upgrade\r\n` +
+        `Date: ${new Date().toUTCString()}\r\n` +
+        `Sec-WebSocket-Accept: ${wsAccept}\r\n` +
+        `Upgrade: websocket\r\n` +
+        `Server: p7ws/0.1a\r\n\r\n`
+    );
+
+    console.log(`[INFO] New connection from ${clientIP}:${clientPort}`);
+
+    const conn = net.createConnection({ host: dhost, port: dport });
+
+    // Cliente → Proxy → Destino
+    socket.on("data", (data) => {
+        if (packetCount++ >= packetsToSkip) {
             conn.write(data);
+            if (outputFile) {
+                fs.appendFileSync(outputFile, `[CLIENT -> DEST] ${data.toString("hex")}\n`);
+            }
         }
-        if(packetCount > packetsToSkip) {
-            //console.log("---c3");
-            packetCount = packetsToSkip;
-        }
-        //conn.write(data);
     });
-    conn.on('data', function(data) {
-        //pipe sucks x2
+
+    // Destino → Proxy → Cliente
+    conn.on("data", (data) => {
         socket.write(data);
+        if (outputFile) {
+            fs.appendFileSync(outputFile, `[DEST -> CLIENT] ${data.toString("hex")}\n`);
+        }
     });
-    socket.once('data', function(data) {
-        /*
-        * Nota para mas tarde, resolver que diferencia hay entre .on y .once
-        */
-    });
-    socket.on('error', function(error) {
-        console.log("[SOCKET] read " + error + " from " + socket.remoteAddress + ":" + socket.remotePort);
-        conn.destroy();
-    });
-    conn.on('error', function(error) {
-        console.log("[REMOTE] read " + error);
+
+    // Errores y limpieza
+    const closeBoth = () => {
         socket.destroy();
-    });
-    socket.on('close', function() {
-        console.log("[INFO] Connection terminated for " + socket.remoteAddress + ":" + socket.remotePort);
         conn.destroy();
+    };
+
+    socket.on("error", (err) => {
+        console.error(`[SOCKET ERROR] ${clientIP}:${clientPort} - ${err.message}`);
+        closeBoth();
+    });
+
+    conn.on("error", (err) => {
+        console.error(`[REMOTE ERROR] ${dhost}:${dport} - ${err.message}`);
+        closeBoth();
+    });
+
+    socket.on("close", () => {
+        console.log(`[INFO] Connection closed ${clientIP}:${clientPort}`);
+        conn.end();
+    });
+
+    conn.on("close", () => {
+        socket.end();
     });
 });
-server.listen(mainPort, function(){
-    console.log("[INFO] Server started on port: " + mainPort);
-    console.log("[INFO] Redirecting requests to: " + dhost + " at port " + dport);
+
+server.listen(mainPort, () => {
+    console.log(`[INFO] Proxy server running on port ${mainPort}`);
+    console.log(`[INFO] Forwarding to ${dhost}:${dport}`);
+    if (outputFile) console.log(`[INFO] Logging traffic to ${outputFile}`);
 });
