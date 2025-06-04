@@ -46,7 +46,7 @@ docker build -t [REGION]-docker.pkg.dev/[Nombre_del_Proyecto]/[Nombre_del_Reposi
 > - `[Nombre_del_Proyecto]`: Nombre de tu proyecto GCP
 > - `[Nombre_del_Repositorio]`: Nombre de tu repositorio Artifact Registry
 > - `[Nombre_de_la_Imagen]`: Cualquier nombre que elijas (ej. `sshws`)
-> - `[Version]`: Versión de la imagen (ej. `v1`, `latest`)
+> - `[Version]`: Versión de la imagen (ej. `1.0`, `latest`)
 
 ---
 
