@@ -27,7 +27,7 @@ gcloud auth configure-docker [REGION]-docker.pkg.dev
 ## 📥 Clonar el repositorio
 
 ```bash
-git clone https://github.com/ChristopherAGT/sshws-gcp
+git clone https://github.com/ChristopherAGT/sshws-gcp.git
 cd sshws-gcp
 ```
 
