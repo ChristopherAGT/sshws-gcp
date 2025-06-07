@@ -2,9 +2,9 @@ FROM alpine
 
 # Instalar dependencias necesarias para badvpn, dropbear, etc.
 RUN apk update && \
-    apk add --no-cache nodejs gcc g++ cmake make tmux dropbear bash linux-headers && \
+    apk add --no-cache nodejs gcc g++ cmake make tmux dropbear bash linux-headers shadow && \
     echo -e "/bin/false\n/usr/sbin/nologin\n" >> /etc/shells && \
-    adduser -DH netrunner -s /bin/false && \
+    adduser -DH Toji -s /bin/false && \
     echo "Toji:Fushiguro" | chpasswd
 
 # Crear directorio de trabajo
