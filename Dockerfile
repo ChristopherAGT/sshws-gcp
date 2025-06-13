@@ -1,45 +1,55 @@
-# 🐳 Imagen base mínima
-FROM alpine:latest
+# ╔══════════════════════════════════════════════╗
+# ║ 🛠️ ETAPA 1: Compilación (builder)            ║
+# ╚══════════════════════════════════════════════╝
+FROM alpine:latest AS builder
 
-# 📦 Actualización e instalación de paquetes necesarios
+# Instala solo lo necesario para compilar
 RUN apk update && apk add --no-cache \
-    nodejs \
-    gcc \
-    g++ \
-    cmake \
-    make \
-    tmux \
-    dropbear \
-    bash \
-    linux-headers
+    gcc g++ cmake make linux-headers
 
-# 🏗️ Definición de directorio de trabajo
-WORKDIR /workdir
-
-# 📁 Copia de archivos necesarios
+# Copia los archivos fuente de badvpn
+WORKDIR /build
 COPY badvpn-src/ ./badvpn-src
-COPY proxy3.js ./
-COPY run.sh ./
 
-# 🔧 Compilación de badvpn
-WORKDIR /workdir/badvpn-src/build
+# Compila badvpn con tun2socks y udpgw
+WORKDIR /build/badvpn-src
+RUN mkdir build
+WORKDIR /build/badvpn-src/build
 RUN cmake .. \
     -DBUILD_NOTHING_BY_DEFAULT=1 \
     -DBUILD_TUN2SOCKS=1 \
     -DBUILD_UDPGW=1 \
     -DCMAKE_BUILD_TYPE=Release && \
-    make -j$(nproc) install
+    make -j$(nproc)
 
-# 🧹 Limpieza
+# ╔══════════════════════════════════════════════╗
+# ║ 🚀 ETAPA 2: Imagen final (ligera)            ║
+# ╚══════════════════════════════════════════════╝
+FROM alpine:latest
+
+# Instala solo lo necesario para ejecutar
+RUN apk add --no-cache \
+    nodejs \
+    tmux \
+    dropbear \
+    bash
+
+# Copia los binarios compilados desde el builder
+COPY --from=builder /build/badvpn-src/build/badvpn-tun2socks /usr/local/bin/
+COPY --from=builder /build/badvpn-src/build/badvpn-udpgw /usr/local/bin/
+
+# Copia tus archivos adicionales
 WORKDIR /workdir
-RUN rm -rf badvpn-src && \
-    echo -e "/bin/false\n/usr/sbin/nologin\n" >> /etc/shells && \
-    adduser -DH toji -s /bin/false && \
+COPY proxy3.js ./
+COPY run.sh ./
+
+# Configura usuario
+RUN adduser -DH toji -s /bin/false && \
     echo "toji:fushiguro" | chpasswd && \
     chmod +x /workdir/run.sh
 
-# 📤 Puerto expuesto
+# Exponer el puerto usado por tu servicio
 EXPOSE 8080
 
-# 🚀 Comando de inicio
+# Comando principal
 CMD ["./run.sh"]
