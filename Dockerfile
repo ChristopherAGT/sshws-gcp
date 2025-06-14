@@ -1,33 +1,64 @@
-FROM alpine
+# ╔══════════════════════════════════════════════╗
+# ║ 🛠️ ETAPA 1: Compilación (builder)            ║
+# ╚══════════════════════════════════════════════╝
+FROM alpine:latest AS builder
 
-# for stunnel support uncomment all commands on this file and run.sh and add stunnel and openssl into the apk command
-RUN apk update
-RUN apk add nodejs gcc g++ cmake make tmux dropbear bash linux-headers
+# 📦 Instala solo lo necesario para compilar
+RUN apk update && apk add --no-cache \
+    gcc g++ cmake make linux-headers
 
-#WORKDIR /etc/stunnel
-#RUN openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -sha256 -days 3650 -nodes -subj "/C=AR/ST=Tierra del Fuego/L=Usuahia/O=Common LLC/OU=Common LLC/CN=localhost"
-#RUN cat key.pem cert.pem > stunnel.pem
-
-WORKDIR /workdir
-
+# 📁 Copia los archivos fuente de BadVPN
+WORKDIR /build
 COPY badvpn-src/ ./badvpn-src
+
+# 🏗️ Prepara y compila badvpn con tun2socks y udpgw
+WORKDIR /build/badvpn-src
+RUN mkdir build
+WORKDIR /build/badvpn-src/build
+RUN cmake .. \
+    -DBUILD_NOTHING_BY_DEFAULT=1 \
+    -DBUILD_TUN2SOCKS=1 \
+    -DBUILD_UDPGW=1 \
+    -DBADVPN_THREAD_SAFE=1 \
+    -DCMAKE_BUILD_TYPE=Release && \
+    make -j$(nproc)
+
+# 🧹 Limpieza opcional del código fuente para reducir espacio en el builder
+RUN rm -rf /build/badvpn-src/*/CMakeFiles \
+           /build/badvpn-src/*/Makefile \
+           /build/badvpn-src/CMakeCache.txt \
+           /build/badvpn-src/build/CMake* \
+           /build/badvpn-src/build/*.cmake \
+           /build/badvpn-src/build/base/*.o
+
+# ╔══════════════════════════════════════════════╗
+# ║ 🚀 ETAPA 2: Imagen final (ligera)            ║
+# ╚══════════════════════════════════════════════╝
+FROM alpine:latest
+
+# 📦 Instala solo lo necesario para ejecutar
+RUN apk add --no-cache \
+    nodejs \
+    tmux \
+    dropbear \
+    bash
+
+# 📂 Copia los binarios compilados desde el builder
+COPY --from=builder /build/badvpn-src/build/badvpn-tun2socks /usr/local/bin/
+COPY --from=builder /build/badvpn-src/build/badvpn-udpgw /usr/local/bin/
+
+# 📁 Copia tus archivos adicionales al contenedor
+WORKDIR /workdir
 COPY proxy3.js ./
-#COPY stunnel.conf /etc/stunnel
 COPY run.sh ./
 
-WORKDIR /workdir/badvpn-src
-RUN mkdir -p build
-WORKDIR /workdir/badvpn-src/build
-RUN cmake .. -DBUILD_NOTHING_BY_DEFAULT=1 -DBUILD_TUN2SOCKS=1 -DBUILD_UDPGW=1 -DCMAKE_BUILD_TYPE=Release
-RUN make -j2 install
+# 👤 Configura el usuario y permisos
+RUN adduser -DH toji -s /bin/false && \
+    echo "toji:fushiguro" | chpasswd && \
+    chmod +x /workdir/run.sh
 
-WORKDIR /workdir
-RUN rm -rf badvpn-src
-RUN echo -e "/bin/false\n/usr/sbin/nologin\n" >> /etc/shells
-RUN adduser -DH test -s /bin/false
-RUN echo -e "test:qweasdzxc" | chpasswd
-RUN chmod +x /workdir/run.sh
-
+# 🌐 Expone el puerto para el servicio
 EXPOSE 8080
 
-CMD ./run.sh
+# 🏁 Comando principal de ejecución
+CMD ["/bin/bash", "./run.sh"]
