@@ -59,4 +59,5 @@ RUN chmod +x /workdir/run.sh
 EXPOSE 8080
 
 # 🏁 Comando de inicio
-CMD ./run.sh
+#CMD ./run.sh [warning]
+CMD [ "./run.sh" ]
