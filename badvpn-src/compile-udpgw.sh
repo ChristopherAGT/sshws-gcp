@@ -1,49 +1,77 @@
 #!/usr/bin/env bash
 #
-# Compiles udpgw for Linux.
-# Intended as a convenience if you don't want to deal with CMake.
-
-# Input environment vars:
-#   SRCDIR - BadVPN source code
-#   CC - compiler
-#   CFLAGS - compiler compile flags
-#   LDFLAGS - compiler link flags
-#   ENDIAN - "little" or "big"
-#   KERNEL - "2.6" or "2.4", default "2.6"
+# Compila udpgw para Linux sin usar CMake.
+# Uso previsto como alternativa rápida si no se quiere lidiar con CMake.
 #
-# Puts object files and the executable in the working directory.
+# Variables de entorno esperadas:
+#   SRCDIR  - Ruta al código fuente de BadVPN (debe contener CMakeLists.txt)
+#   CC      - Compilador (por ejemplo, gcc o clang)
+#   CFLAGS  - Flags para compilación
+#   LDFLAGS - Flags para enlazado
+#   ENDIAN  - "little" o "big"
+#   KERNEL  - "2.6" (por defecto) o "2.4"
+#
+# Archivos generados: objetos y ejecutable "udpgw" en el directorio actual.
 #
 
+set -e  # Salir al primer error
+set -x  # Imprimir comandos conforme se ejecutan (debug)
+
+# Validación de SRCDIR
 if [[ -z $SRCDIR ]] || [[ ! -e $SRCDIR/CMakeLists.txt ]]; then
-    echo "SRCDIR is wrong"
+    echo "Error: SRCDIR no está definido o no contiene CMakeLists.txt"
     exit 1
 fi
 
+# Validación de CC (compilador)
 if ! "${CC}" --version &>/dev/null; then
-    echo "CC is wrong"
+    echo "Error: CC no es un compilador válido"
     exit 1
 fi
 
+# Validación de ENDIAN
 if [[ $ENDIAN != "little" ]] && [[ $ENDIAN != "big" ]]; then
-    echo "ENDIAN is wrong"
+    echo "Error: ENDIAN debe ser 'little' o 'big'"
     exit 1
 fi
 
+# Validación de KERNEL
 if [[ -z $KERNEL ]]; then
     KERNEL="2.6"
-elif [[ $KERNEL != "2.6" ]] && [[ $KERNEL != "2.4" ]]; then
-    echo "KERNEL is wrong"
+elif [[ $KERNEL != "2.6" && $KERNEL != "2.4" ]]; then
+    echo "Error: KERNEL debe ser '2.6' o '2.4'"
     exit 1
 fi
 
+# Asegurar compatibilidad con C99
 CFLAGS="${CFLAGS} -std=gnu99"
+
+# Incluir directorios de cabecera
 INCLUDES=( "-I${SRCDIR}" )
-DEFS=( -DBADVPN_THREAD_SAFE=0 -DBADVPN_LINUX -DBADVPN_BREACTOR_BADVPN -D_GNU_SOURCE )
 
-[[ $KERNEL = "2.4" ]] && DEFS=( "${DEFS[@]}" -DBADVPN_USE_SELFPIPE -DBADVPN_USE_POLL ) || DEFS=( "${DEFS[@]}" -DBADVPN_USE_SIGNALFD -DBADVPN_USE_EPOLL )
+# Definiciones de preprocesador comunes
+DEFS=(
+    -DBADVPN_THREAD_SAFE=0
+    -DBADVPN_LINUX
+    -DBADVPN_BREACTOR_BADVPN
+    -D_GNU_SOURCE
+)
 
-[[ $ENDIAN = "little" ]] && DEFS=( "${DEFS[@]}" -DBADVPN_LITTLE_ENDIAN ) || DEFS=( "${DEFS[@]}" -DBADVPN_BIG_ENDIAN )
-    
+# Definiciones específicas según el kernel
+if [[ $KERNEL == "2.4" ]]; then
+    DEFS+=( -DBADVPN_USE_SELFPIPE -DBADVPN_USE_POLL )
+else
+    DEFS+=( -DBADVPN_USE_SIGNALFD -DBADVPN_USE_EPOLL )
+fi
+
+# Definición de endianness
+if [[ $ENDIAN == "little" ]]; then
+    DEFS+=( -DBADVPN_LITTLE_ENDIAN )
+else
+    DEFS+=( -DBADVPN_BIG_ENDIAN )
+fi
+
+# Lista de archivos fuente
 SOURCES="
 base/BLog_syslog.c
 system/BReactor_badvpn.c
@@ -72,14 +100,13 @@ base/BPending.c
 udpgw/udpgw.c
 "
 
-set -e
-set -x
-
+# Compilar cada archivo fuente en un objeto
 OBJS=()
 for f in $SOURCES; do
     obj=$(basename "${f}").o
     "${CC}" -c ${CFLAGS} "${INCLUDES[@]}" "${DEFS[@]}" "${SRCDIR}/${f}" -o "${obj}"
-    OBJS=( "${OBJS[@]}" "${obj}" )
+    OBJS+=( "${obj}" )
 done
 
+# Enlazar objetos en ejecutable final
 "${CC}" ${LDFLAGS} "${OBJS[@]}" -o udpgw -lrt -lpthread
