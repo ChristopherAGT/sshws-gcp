@@ -1,57 +1,93 @@
 #!/usr/bin/env bash
 #
-# Compiles tun2socks for Linux.
-# Intended as a convenience if you don't want to deal with CMake.
-
-# Input environment vars:
-#   SRCDIR - BadVPN source code
-#   OUTDIR - tun2socks binary output file directory
-#   CC - compiler
-#   CFLAGS - compiler compile flags
-#   LDFLAGS - compiler link flags
-#   ENDIAN - "little" or "big"
-#   KERNEL - "2.6" or "2.4", default "2.6"
+# Compila tun2socks para Linux sin usar CMake.
+# Útil si se desea evitar la configuración de CMake.
 #
-# Puts object files and the executable in the working directory.
+# Variables de entorno esperadas:
+#   SRCDIR  - Directorio del código fuente de BadVPN (debe contener CMakeLists.txt)
+#   OUTDIR  - Directorio de salida del binario tun2socks
+#   CC      - Compilador (ej. gcc o clang)
+#   CFLAGS  - Flags de compilación
+#   LDFLAGS - Flags de enlazado
+#   ENDIAN  - "little" o "big"
+#   KERNEL  - "2.6" o "2.4" (por defecto: "2.6")
+#
+# Resultado: ejecutable tun2socks y archivos .o en el directorio actual.
 #
 
+set -e  # Detener ejecución ante errores
+set -x  # Mostrar cada comando ejecutado (modo debug)
+
+# Validación del directorio fuente
 if [[ -z $SRCDIR ]] || [[ ! -e $SRCDIR/CMakeLists.txt ]]; then
-    echo "SRCDIR is wrong"
+    echo "Error: SRCDIR no está definido o no contiene CMakeLists.txt"
     exit 1
 fi
 
-if [[ ! -z $OUTDIR ]] && [[ ! -d $OUTDIR  ]]; then
-    echo "OUTDIR is wrong"
+# Validación del directorio de salida (si está definido)
+if [[ -n $OUTDIR ]] && [[ ! -d $OUTDIR ]]; then
+    echo "Error: OUTDIR no existe o no es un directorio"
     exit 1
 fi
 
+# Validación del compilador
 if ! "${CC}" --version &>/dev/null; then
-    echo "CC is wrong"
+    echo "Error: CC no es un compilador válido"
     exit 1
 fi
 
-if [[ $ENDIAN != "little" ]] && [[ $ENDIAN != "big" ]]; then
-    echo "ENDIAN is wrong"
+# Validación de endianness
+if [[ $ENDIAN != "little" && $ENDIAN != "big" ]]; then
+    echo "Error: ENDIAN debe ser 'little' o 'big'"
     exit 1
 fi
 
+# Validación de kernel (por defecto 2.6)
 if [[ -z $KERNEL ]]; then
     KERNEL="2.6"
-elif [[ $KERNEL != "2.6" ]] && [[ $KERNEL != "2.4" ]]; then
-    echo "KERNEL is wrong"
+elif [[ $KERNEL != "2.6" && $KERNEL != "2.4" ]]; then
+    echo "Error: KERNEL debe ser '2.6' o '2.4'"
     exit 1
 fi
 
+# Añadir compatibilidad con C99
 CFLAGS="${CFLAGS} -std=gnu99"
-INCLUDES=( "-I${SRCDIR}" "-I${SRCDIR}/lwip/src/include/ipv4" "-I${SRCDIR}/lwip/src/include/ipv6" "-I${SRCDIR}/lwip/src/include" "-I${SRCDIR}/lwip/custom" )
-DEFS=( -DBADVPN_THREAD_SAFE=0 -DBADVPN_LINUX -DBADVPN_BREACTOR_BADVPN -D_GNU_SOURCE )
 
-[[ $KERNEL = "2.4" ]] && DEFS=( "${DEFS[@]}" -DBADVPN_USE_SELFPIPE -DBADVPN_USE_POLL ) || DEFS=( "${DEFS[@]}" -DBADVPN_USE_SIGNALFD -DBADVPN_USE_EPOLL )
+# Rutas de inclusión
+INCLUDES=(
+    "-I${SRCDIR}"
+    "-I${SRCDIR}/lwip/src/include/ipv4"
+    "-I${SRCDIR}/lwip/src/include/ipv6"
+    "-I${SRCDIR}/lwip/src/include"
+    "-I${SRCDIR}/lwip/custom"
+)
 
-[[ $ENDIAN = "little" ]] && DEFS=( "${DEFS[@]}" -DBADVPN_LITTLE_ENDIAN ) || DEFS=( "${DEFS[@]}" -DBADVPN_BIG_ENDIAN )
+# Definiciones comunes de preprocesador
+DEFS=(
+    -DBADVPN_THREAD_SAFE=0
+    -DBADVPN_LINUX
+    -DBADVPN_BREACTOR_BADVPN
+    -D_GNU_SOURCE
+)
 
+# Definiciones según kernel
+if [[ $KERNEL == "2.4" ]]; then
+    DEFS+=( -DBADVPN_USE_SELFPIPE -DBADVPN_USE_POLL )
+else
+    DEFS+=( -DBADVPN_USE_SIGNALFD -DBADVPN_USE_EPOLL )
+fi
+
+# Definiciones según endianness
+if [[ $ENDIAN == "little" ]]; then
+    DEFS+=( -DBADVPN_LITTLE_ENDIAN )
+else
+    DEFS+=( -DBADVPN_BIG_ENDIAN )
+fi
+
+# Usar el directorio actual si OUTDIR no está definido
 [[ -z $OUTDIR ]] && OUTDIR="."
-    
+
+# Lista de archivos fuente (se conserva 100% igual)
 SOURCES="
 base/BLog_syslog.c
 system/BReactor_badvpn.c
@@ -113,14 +149,13 @@ udpgw_client/UdpGwClient.c
 socks_udp_client/SocksUdpClient.c
 "
 
-set -e
-set -x
-
+# Compilar cada archivo fuente en un archivo objeto .o
 OBJS=()
 for f in $SOURCES; do
-    obj=${f//\//_}.o
+    obj=${f//\//_}.o  # Reemplazar / por _ para nombre de archivo objeto
     "${CC}" -c ${CFLAGS} "${INCLUDES[@]}" "${DEFS[@]}" "${SRCDIR}/${f}" -o "${obj}"
-    OBJS=( "${OBJS[@]}" "${obj}" )
+    OBJS+=( "${obj}" )
 done
 
-"${CC}" ${LDFLAGS} "${OBJS[@]}" -o $OUTDIR/tun2socks -lrt -lpthread
+# Enlazar todos los objetos en el binario final tun2socks
+"${CC}" ${LDFLAGS} "${OBJS[@]}" -o "${OUTDIR}/tun2socks" -lrt -lpthread
