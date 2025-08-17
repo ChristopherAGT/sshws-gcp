@@ -1,6 +1,7 @@
 /*
- * WS Proxy Bridge 3.0
+ * Proxy Bridge 2.1
  * Autor: ChristopherAGT - Guatemalteco
+ * Versión adaptada para Cloud Run y WebSocket real
  */
 
 const http = require("http");
@@ -14,9 +15,9 @@ const WebSocket = require("ws");
 let dhost = process.env.DHOST || "127.0.0.1";
 let dport = parseInt(process.env.DPORT, 10) || 40000;
 let mainPort = parseInt(process.env.PORT, 10) || 8080;  // Cloud Run asigna PORT
-let wsPath = process.env.WS_PATH || "/";                // Ruta del WebSocket
 let outputFile = null;
 let packetsToSkip = parseInt(process.env.PACKSKIP, 10) || 1;
+let wsPath = process.env.WS_PATH || "/";
 let gcwarn = true;
 
 // =======================
@@ -60,19 +61,27 @@ function gcollector() {
 }
 setInterval(gcollector, 1000);
 
+// ==============================
+// Limpieza de IP tipo "::ffff:"
+// ==============================
+function parseRemoteAddr(raddr) {
+    const strAddr = raddr.toString();
+    return strAddr.includes("ffff") ? strAddr.substring(strAddr.indexOf("ffff") + 4) : strAddr;
+}
+
 // =====================
 // Servidor HTTP + WS
 // =====================
 const server = http.createServer((req, res) => {
     res.writeHead(200, { "Content-Type": "text/plain" });
-    res.end("WS Proxy Bridge 3.0 running\n");
+    res.end("Proxy Bridge 2.1 running\n");
 });
 
 const wss = new WebSocket.Server({ server, path: wsPath });
 
 wss.on("connection", (ws, req) => {
     let packetCount = 0;
-    const clientIP = req.socket.remoteAddress;
+    const clientIP = parseRemoteAddr(req.socket.remoteAddress);
     const clientPort = req.socket.remotePort;
 
     console.log(`[INFO] New WS connection from ${clientIP}:${clientPort}`);
@@ -80,7 +89,7 @@ wss.on("connection", (ws, req) => {
     // Conexión TCP hacia el destino
     const conn = net.createConnection({ host: dhost, port: dport });
 
-    // WS -> Destino
+    // WS -> TCP destino
     ws.on("message", (msg) => {
         if (packetCount++ >= packetsToSkip) {
             conn.write(msg);
@@ -90,7 +99,7 @@ wss.on("connection", (ws, req) => {
         }
     });
 
-    // Destino -> WS
+    // TCP destino -> WS
     conn.on("data", (data) => {
         if (ws.readyState === WebSocket.OPEN) {
             ws.send(data);
@@ -100,7 +109,7 @@ wss.on("connection", (ws, req) => {
         }
     });
 
-    // Errores y cierre
+    // Manejo de errores y cierre
     const closeBoth = () => {
         try { ws.close(); } catch {}
         try { conn.destroy(); } catch {}
@@ -128,9 +137,9 @@ wss.on("connection", (ws, req) => {
     });
 });
 
-// Escuchar en 0.0.0.0
+// Escuchar en 0.0.0.0 y el puerto que Cloud Run asigne
 server.listen(mainPort, "0.0.0.0", () => {
-    console.log(`[INFO] WS Proxy running on 0.0.0.0:${mainPort}${wsPath}`);
+    console.log(`[INFO] Proxy server running on 0.0.0.0:${mainPort}${wsPath}`);
     console.log(`[INFO] Forwarding to ${dhost}:${dport}`);
     if (outputFile) console.log(`[INFO] Logging traffic to ${outputFile}`);
 });
