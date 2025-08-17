@@ -27,7 +27,7 @@ FROM alpine
 
 # 📦 Solo instala lo necesario para tiempo de ejecución
 RUN apk update && apk add --no-cache \
-    nodejs npm tmux dropbear bash
+    nodejs tmux dropbear bash
 
 # 📁 Directorio principal de trabajo
 WORKDIR /workdir
@@ -39,10 +39,13 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY proxy3.js ./
 COPY run.sh ./
 COPY badvpn-src/ ./badvpn-src
-COPY package.json ./   # <-- Agregado para instalar ws
+#COPY stunnel.conf /etc/stunnel
 
-# 🔧 Instala dependencias Node necesarias
-RUN npm install --production
+# 📂 Soporte opcional para stunnel (comentado)
+#WORKDIR /etc/stunnel
+#RUN apk add --no-cache openssl stunnel
+#RUN openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -sha256 -days 3650 -nodes -subj "/C=AR/ST=Tierra del Fuego/L=Usuahia/O=Common LLC/OU=Common LLC/CN=localhost"
+#RUN cat key.pem cert.pem > stunnel.pem
 
 # 👤 Usuario con shell restringida
 RUN echo -e "/bin/false\n/usr/sbin/nologin\n" >> /etc/shells && \
@@ -56,4 +59,5 @@ RUN chmod +x /workdir/run.sh
 EXPOSE 8080
 
 # 🏁 Comando de inicio
+#CMD ./run.sh [warning]
 CMD [ "./run.sh" ]
