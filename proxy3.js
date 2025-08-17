@@ -1,23 +1,22 @@
 /*
- * Proxy Bridge 2.1
+ * Proxy Bridge 2.1 - Mejorada
  * Autor: ChristopherAGT - Guatemalteco
- * Versión adaptada para Cloud Run y WebSocket real
+ * Adaptada para Cloud Run
  */
 
-const http = require("http");
+const crypto = require("crypto");
 const net = require("net");
 const fs = require("fs");
-const WebSocket = require("ws");
+const http = require("http");
 
 // =======================
 // Configuración inicial
 // =======================
 let dhost = process.env.DHOST || "127.0.0.1";
 let dport = parseInt(process.env.DPORT, 10) || 40000;
-let mainPort = parseInt(process.env.PORT, 10) || 8080;  // Cloud Run asigna PORT
+let mainPort = parseInt(process.env.PORT, 10) || 8080;  // Cloud Run setea PORT
 let outputFile = null;
 let packetsToSkip = parseInt(process.env.PACKSKIP, 10) || 1;
-let wsPath = process.env.WS_PATH || "/";
 let gcwarn = true;
 
 // =======================
@@ -25,24 +24,11 @@ let gcwarn = true;
 // =======================
 for (let i = 0; i < process.argv.length; i++) {
     switch (process.argv[i]) {
-        case "-skip":
-            packetsToSkip = parseInt(process.argv[i + 1], 10) || packetsToSkip;
-            break;
-        case "-dhost":
-            dhost = process.argv[i + 1] || dhost;
-            break;
-        case "-dport":
-            dport = parseInt(process.argv[i + 1], 10) || dport;
-            break;
-        case "-mport":
-            mainPort = parseInt(process.argv[i + 1], 10) || mainPort;
-            break;
-        case "-o":
-            outputFile = process.argv[i + 1] || null;
-            break;
-        case "-path":
-            wsPath = process.argv[i + 1] || wsPath;
-            break;
+        case "-skip": packetsToSkip = parseInt(process.argv[i + 1], 10) || packetsToSkip; break;
+        case "-dhost": dhost = process.argv[i + 1] || dhost; break;
+        case "-dport": dport = parseInt(process.argv[i + 1], 10) || dport; break;
+        case "-mport": mainPort = parseInt(process.argv[i + 1], 10) || mainPort; break;
+        case "-o": outputFile = process.argv[i + 1] || null; break;
     }
 }
 
@@ -55,9 +41,7 @@ function gcollector() {
         gcwarn = false;
         return;
     }
-    if (global.gc) {
-        global.gc();
-    }
+    if (global.gc) global.gc();
 }
 setInterval(gcollector, 1000);
 
@@ -70,53 +54,52 @@ function parseRemoteAddr(raddr) {
 }
 
 // =====================
-// Servidor HTTP + WS
+// Crear servidor TCP
 // =====================
-const server = http.createServer((req, res) => {
-    res.writeHead(200, { "Content-Type": "text/plain" });
-    res.end("Proxy Bridge 2.1 running\n");
-});
+const serverTCP = net.createServer();
 
-const wss = new WebSocket.Server({ server, path: wsPath });
-
-wss.on("connection", (ws, req) => {
+serverTCP.on("connection", (socket) => {
     let packetCount = 0;
-    const clientIP = parseRemoteAddr(req.socket.remoteAddress);
-    const clientPort = req.socket.remotePort;
+    const clientIP = parseRemoteAddr(socket.remoteAddress);
+    const clientPort = socket.remotePort;
 
-    console.log(`[INFO] New WS connection from ${clientIP}:${clientPort}`);
+    // Simula handshake WebSocket falso
+    const wsAccept = Buffer.from(crypto.randomBytes(20)).toString("base64");
+    socket.write(
+        `HTTP/1.1 101 Switching Protocols\r\n` +
+        `Connection: Upgrade\r\n` +
+        `Date: ${new Date().toUTCString()}\r\n` +
+        `Sec-WebSocket-Accept: ${wsAccept}\r\n` +
+        `Upgrade: websocket\r\n` +
+        `Server: p7ws/0.1a\r\n\r\n`
+    );
 
-    // Conexión TCP hacia el destino
+    console.log(`[INFO] New connection from ${clientIP}:${clientPort}`);
+
     const conn = net.createConnection({ host: dhost, port: dport });
 
-    // WS -> TCP destino
-    ws.on("message", (msg) => {
+    // Cliente → Proxy → Destino
+    socket.on("data", (data) => {
         if (packetCount++ >= packetsToSkip) {
-            conn.write(msg);
-            if (outputFile) {
-                fs.appendFileSync(outputFile, `[CLIENT -> DEST] ${Buffer.from(msg).toString("hex")}\n`);
-            }
+            conn.write(data);
+            if (outputFile) fs.promises.appendFile(outputFile, `[CLIENT -> DEST] ${data.toString("hex")}\n`).catch(() => {});
         }
     });
 
-    // TCP destino -> WS
+    // Destino → Proxy → Cliente
     conn.on("data", (data) => {
-        if (ws.readyState === WebSocket.OPEN) {
-            ws.send(data);
-        }
-        if (outputFile) {
-            fs.appendFileSync(outputFile, `[DEST -> CLIENT] ${data.toString("hex")}\n`);
-        }
+        socket.write(data);
+        if (outputFile) fs.promises.appendFile(outputFile, `[DEST -> CLIENT] ${data.toString("hex")}\n`).catch(() => {});
     });
 
-    // Manejo de errores y cierre
+    // Manejo de cierre y errores
     const closeBoth = () => {
-        try { ws.close(); } catch {}
-        try { conn.destroy(); } catch {}
+        if (!socket.destroyed) socket.destroy();
+        if (!conn.destroyed) conn.destroy();
     };
 
-    ws.on("error", (err) => {
-        console.error(`[WS ERROR] ${clientIP}:${clientPort} - ${err.message}`);
+    socket.on("error", (err) => {
+        console.error(`[SOCKET ERROR] ${clientIP}:${clientPort} - ${err.message}`);
         closeBoth();
     });
 
@@ -125,21 +108,31 @@ wss.on("connection", (ws, req) => {
         closeBoth();
     });
 
-    ws.on("close", () => {
-        console.log(`[INFO] WS closed ${clientIP}:${clientPort}`);
+    socket.once("close", () => {
+        console.log(`[INFO] Connection closed ${clientIP}:${clientPort}`);
         conn.end();
     });
 
-    conn.on("close", () => {
-        if (ws.readyState === WebSocket.OPEN) {
-            ws.close();
-        }
+    conn.once("close", () => {
+        socket.end();
     });
 });
 
-// Escuchar en 0.0.0.0 y el puerto que Cloud Run asigne
-server.listen(mainPort, "0.0.0.0", () => {
-    console.log(`[INFO] Proxy server running on 0.0.0.0:${mainPort}${wsPath}`);
-    console.log(`[INFO] Forwarding to ${dhost}:${dport}`);
-    if (outputFile) console.log(`[INFO] Logging traffic to ${outputFile}`);
+// =====================
+// Servidor HTTP para Cloud Run
+// =====================
+const serverHTTP = http.createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("Proxy alive\n");
+});
+
+serverHTTP.listen(mainPort, "0.0.0.0", () => {
+    console.log(`[INFO] HTTP listener running on 0.0.0.0:${mainPort}`);
+    console.log(`[INFO] TCP Proxy forwarding to ${dhost}:${dport}`);
+});
+
+// Escuchar TCP en puerto interno diferente (ej: 4000)
+const tcpPort = 4000;
+serverTCP.listen(tcpPort, "0.0.0.0", () => {
+    console.log(`[INFO] TCP Proxy server running on 0.0.0.0:${tcpPort}`);
 });
